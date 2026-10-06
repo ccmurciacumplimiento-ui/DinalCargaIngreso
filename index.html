@@ -142,13 +142,21 @@ function actualizarEstadoRegistro(id, estado) {
 
 /* ============================ AUTH (DEMO) ============================ */
 const ADMIN_PASSWORD = 'admin123'; // cámbiala aquí antes de compartir el archivo
+const TRANSPORTADOR_PASSWORD = 'dinal2026'; // cámbiala aquí — clave para que los transportadores accedan al formulario
 const SESSION_KEY = 'enrolamiento_admin_session';
+const TRANSPORT_SESSION_KEY = 'enrolamiento_transport_session';
 function iniciarSesionAdmin(pw) {
   if (pw === ADMIN_PASSWORD) { sessionStorage.setItem(SESSION_KEY, 'true'); return true; }
   return false;
 }
 function cerrarSesionAdmin() { sessionStorage.removeItem(SESSION_KEY); }
 function haySesionAdminActiva() { return sessionStorage.getItem(SESSION_KEY) === 'true'; }
+function iniciarSesionTransportador(pw) {
+  if (pw === TRANSPORTADOR_PASSWORD) { sessionStorage.setItem(TRANSPORT_SESSION_KEY, 'true'); return true; }
+  return false;
+}
+function cerrarSesionTransportador() { sessionStorage.removeItem(TRANSPORT_SESSION_KEY); }
+function haySesionTransportadorActiva() { return sessionStorage.getItem(TRANSPORT_SESSION_KEY) === 'true'; }
 
 /* ============================ VALIDADORES ============================ */
 function estaVencida(fechaISO) {
@@ -911,7 +919,7 @@ function validarPaso(paso, datos) {
   return null;
 }
 
-function PortalConductor() {
+function PortalConductor({ onSalir }) {
   const [paso, setPaso] = useState(0);
   const [datos, setDatos] = useState(crearRegistroVacio());
   const [error, setError] = useState('');
@@ -943,7 +951,11 @@ function PortalConductor() {
         <div className="max-w-sm rounded-xl bg-white p-8 text-center shadow-sm ring-1 ring-slate-200">
           <IconCheck size={48} className="mx-auto mb-4 text-green-600" />
           <h1 className="text-lg font-semibold text-slate-800">Registro completado</h1>
-          <p className="mt-2 text-sm text-slate-500">Su ficha de enrolamiento fue registrada y el PDF se descargó automáticamente. Puede cerrar esta ventana.</p>
+          <p className="mt-2 text-sm text-slate-500">Su ficha de enrolamiento fue registrada y el PDF se descargó automáticamente.</p>
+          <div className="mt-5 space-y-2">
+            <button onClick={() => { setDatos(crearRegistroVacio()); setPaso(0); setEnviado(false); }} className="w-full rounded-lg bg-corporate-800 py-2 text-sm font-medium text-white hover:bg-corporate-950 transition">Registrar otro conductor</button>
+            {onSalir && <button onClick={onSalir} className="w-full text-center text-xs text-slate-500 hover:text-slate-700">← Volver al inicio</button>}
+          </div>
         </div>
       </div>
     );
@@ -990,7 +1002,7 @@ function AdminLogin({ onIngreso }) {
         </div>
         {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
         <button type="submit" className="mt-5 w-full rounded-lg bg-corporate-800 py-2.5 text-sm font-semibold text-white hover:bg-corporate-950">Ingresar</button>
-        <p className="mt-4 text-center text-[11px] text-slate-400">Acceso exclusivo para el administrador del sistema. Los conductores no requieren usuario ni contraseña (van a la página principal).</p>
+        <p className="mt-4 text-center text-[11px] text-slate-400">Acceso exclusivo para el administrador del sistema.</p>
       </form>
     </div>
   );
@@ -1213,6 +1225,58 @@ function StatCard({ icono: Icono, etiqueta, valor, tono }) {
   );
 }
 
+/* ============================ ADMIN — ACTIVIDAD RECIENTE ============================ */
+function ActividadReciente({ registros }) {
+  const ultimos = registros.slice().sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || '')).slice(0, 5);
+  if (ultimos.length === 0) return null;
+  return (
+    <div className="rounded-xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+      <h2 className="mb-3 text-sm font-semibold text-slate-800">Actividad reciente</h2>
+      <div className="space-y-2">
+        {ultimos.map((r, i) => {
+          const fecha = r.createdAt ? new Date(r.createdAt) : null;
+          return (
+            <div key={i} className="flex items-center gap-3 rounded-lg bg-slate-50 px-3 py-2">
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-100 text-blue-700 text-xs font-bold">
+                {(r.conductor?.nombreCompleto || '?')[0].toUpperCase()}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-slate-700 truncate">{r.conductor?.nombreCompleto || 'Sin nombre'}</p>
+                <p className="text-[11px] text-slate-400">CC {r.conductor?.numeroDocumento || '—'} · Placa {r.vehiculo?.placa || '—'}</p>
+              </div>
+              <div className="text-right shrink-0">
+                <p className="text-[11px] text-slate-500">{fecha ? fecha.toLocaleDateString('es-CO') : '—'}</p>
+                <p className="text-[10px] text-slate-400">{fecha ? fecha.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' }) : ''}</p>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ============================ ADMIN — EXPORTAR CSV ============================ */
+function exportarCSV(registros) {
+  const encabezados = ['Fecha','Nombre','Documento','Teléfono','Placa','Marca','Modelo','Estado'];
+  const filas = registros.map(r => [
+    r.createdAt ? new Date(r.createdAt).toLocaleDateString('es-CO') : '',
+    r.conductor?.nombreCompleto || '',
+    r.conductor?.numeroDocumento || '',
+    r.conductor?.celular || '',
+    r.vehiculo?.placa || '',
+    r.vehiculo?.marca || '',
+    r.vehiculo?.modelo || '',
+    r.estadoDocumental || r.estado || 'pendiente',
+  ]);
+  const csv = [encabezados, ...filas].map(f => f.map(c => '"' + String(c).replace(/"/g, '""') + '"').join(',')).join('\n');
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'registros_dinalcarga_' + new Date().toISOString().slice(0, 10) + '.csv';
+  a.click(); URL.revokeObjectURL(url);
+}
+
 function AdminDashboard({ onSalir }) {
   const [registros, setRegistros] = useState(() => listarRegistros());
   const [filtros, setFiltros] = useState({ texto: '', estado: 'todos', fecha: '' });
@@ -1234,6 +1298,18 @@ function AdminDashboard({ onSalir }) {
     vencidos: registrosConEstado.filter(r => r.estadoDocumental === 'vencido').length,
   }), [registrosConEstado]);
 
+  /* Estadísticas adicionales */
+  const statsExtra = useMemo(() => {
+    const hoy = new Date().toISOString().slice(0, 10);
+    const estaSemana = new Date(); estaSemana.setDate(estaSemana.getDate() - 7);
+    const semanaISO = estaSemana.toISOString();
+    return {
+      hoy: registrosConEstado.filter(r => (r.createdAt || '').slice(0, 10) === hoy).length,
+      estaSemana: registrosConEstado.filter(r => (r.createdAt || '') >= semanaISO).length,
+      conFirma: registrosConEstado.filter(r => r.declaracion?.firmaDataUrl).length,
+    };
+  }, [registrosConEstado]);
+
   function cambiarEstado(id, estado) {
     actualizarEstadoRegistro(id, estado);
     setRegistros(listarRegistros());
@@ -1249,20 +1325,111 @@ function AdminDashboard({ onSalir }) {
             {LOGO_EMPRESA_BASE64 ? <img src={LOGO_EMPRESA_BASE64} alt="Logo" className="h-7 w-auto" /> : <IconTruck size={20} />}
             <h1 className="text-base font-semibold">Panel de Administración — Enrolamiento</h1>
           </div>
-          <button onClick={cerrarSesion} className="flex items-center gap-1.5 text-sm text-slate-300 hover:text-white"><IconLogOut size={16} /> Cerrar sesión</button>
+          <div className="flex items-center gap-3">
+            <button onClick={() => exportarCSV(registrosConEstado)} className="flex items-center gap-1.5 rounded-lg bg-white/10 px-3 py-1.5 text-xs text-slate-200 hover:bg-white/20 transition">
+              <IconDownload size={14} /> Exportar CSV
+            </button>
+            <button onClick={cerrarSesion} className="flex items-center gap-1.5 text-sm text-slate-300 hover:text-white"><IconLogOut size={16} /> Cerrar sesión</button>
+          </div>
         </div>
       </header>
       <main className="mx-auto max-w-6xl space-y-6 px-6 py-6">
+        {/* Tarjetas principales */}
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
           <StatCard icono={IconUsers} etiqueta="Total registros" valor={totales.total} tono="bg-slate-100 text-slate-700" />
           <StatCard icono={IconTruck} etiqueta="Vigentes" valor={totales.vigentes} tono="bg-green-100 text-green-700" />
           <StatCard icono={IconClock} etiqueta="Por vencer" valor={totales.alertas} tono="bg-amber-100 text-amber-700" />
           <StatCard icono={IconShieldAlert} etiqueta="Vencidos / alertas" valor={totales.vencidos} tono="bg-red-100 text-red-700" />
         </div>
+        {/* Resumen rápido */}
+        <div className="grid grid-cols-3 gap-4">
+          <div className="rounded-xl bg-white p-4 shadow-sm ring-1 ring-slate-200 text-center">
+            <p className="text-2xl font-bold text-blue-700">{statsExtra.hoy}</p>
+            <p className="text-xs text-slate-500">Registros hoy</p>
+          </div>
+          <div className="rounded-xl bg-white p-4 shadow-sm ring-1 ring-slate-200 text-center">
+            <p className="text-2xl font-bold text-indigo-700">{statsExtra.estaSemana}</p>
+            <p className="text-xs text-slate-500">Esta semana</p>
+          </div>
+          <div className="rounded-xl bg-white p-4 shadow-sm ring-1 ring-slate-200 text-center">
+            <p className="text-2xl font-bold text-emerald-700">{statsExtra.conFirma}</p>
+            <p className="text-xs text-slate-500">Con firma digital</p>
+          </div>
+        </div>
+        {/* Actividad reciente */}
+        <ActividadReciente registros={registrosConEstado} />
+        {/* Filtros y tabla */}
         <Filters filtros={filtros} onChange={setFiltros} />
         <DriversTable registros={registrosFiltrados} onVer={setSeleccionado} />
       </main>
       <DriverDetailModal registro={seleccionado} onCerrar={() => setSeleccionado(null)} onCambiarEstado={cambiarEstado} />
+    </div>
+  );
+}
+
+/* ============================ LANDING PAGE ============================ */
+function LandingPage({ onSeleccion }) {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-corporate-950 to-corporate-800 px-4">
+      <div className="w-full max-w-md space-y-6">
+        <div className="text-center">
+          {LOGO_EMPRESA_BASE64
+            ? <img src={LOGO_EMPRESA_BASE64} alt="DINALCARGA" className="mx-auto mb-4 h-16 w-auto" />
+            : <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-white/10"><IconTruck size={32} className="text-white" /></div>}
+          <h1 className="text-2xl font-bold text-white">DINALCARGA S.A.S.</h1>
+          <p className="mt-1 text-sm text-slate-300">Sistema de Enrolamiento de Conductores</p>
+        </div>
+        <div className="space-y-3">
+          <button onClick={() => onSeleccion('transportador')}
+            className="flex w-full items-center gap-4 rounded-xl bg-white p-5 text-left shadow-lg transition hover:scale-[1.02] hover:shadow-xl active:scale-[0.98]">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-blue-100 text-blue-700"><IconTruck size={24} /></div>
+            <div>
+              <p className="text-base font-semibold text-slate-800">Soy Transportador</p>
+              <p className="text-xs text-slate-500">Registre sus datos, vehículo y documentos</p>
+            </div>
+            <IconChevronRight size={20} className="ml-auto text-slate-400" />
+          </button>
+          <button onClick={() => onSeleccion('admin')}
+            className="flex w-full items-center gap-4 rounded-xl bg-white/10 p-5 text-left backdrop-blur transition hover:bg-white/20 active:scale-[0.98]">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-white/10 text-white"><IconShieldAlert size={24} /></div>
+            <div>
+              <p className="text-base font-semibold text-white">Administrador</p>
+              <p className="text-xs text-slate-400">Panel de gestión y consulta de registros</p>
+            </div>
+            <IconChevronRight size={20} className="ml-auto text-slate-500" />
+          </button>
+        </div>
+        <p className="text-center text-[10px] text-slate-500">© 2026 DINALCARGA S.A.S. — Todos los derechos reservados</p>
+      </div>
+    </div>
+  );
+}
+
+/* ============================ TRANSPORTADOR LOGIN ============================ */
+function TransportadorLogin({ onIngreso, onVolver }) {
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  function manejarSubmit(e) {
+    e.preventDefault();
+    if (iniciarSesionTransportador(password)) { onIngreso(); }
+    else { setError('Clave incorrecta. Solicite la clave a su contacto en DINALCARGA.'); }
+  }
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-neutral-50 px-4">
+      <form onSubmit={manejarSubmit} className="w-full max-w-xs space-y-4 rounded-xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
+        <div className="text-center">
+          <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-full bg-blue-100"><IconTruck size={24} className="text-blue-700" /></div>
+          <h1 className="text-lg font-semibold text-slate-800">Acceso Transportador</h1>
+          <p className="mt-1 text-xs text-slate-500">Ingrese la clave proporcionada por DINALCARGA</p>
+        </div>
+        <div>
+          <label className="label-field">Clave de acceso</label>
+          <input type="password" className="input-field" value={password} onChange={e => setPassword(e.target.value)} autoFocus />
+          {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
+        </div>
+        <button type="submit" className="w-full rounded-lg bg-corporate-800 py-2.5 text-sm font-medium text-white hover:bg-corporate-950 transition">Ingresar</button>
+        <button type="button" onClick={onVolver} className="w-full text-center text-xs text-slate-500 hover:text-slate-700">← Volver al inicio</button>
+      </form>
     </div>
   );
 }
@@ -1277,13 +1444,21 @@ function App() {
   }, []);
   const [, forceUpdate] = useState(0);
 
+  function irA(hash) { window.location.hash = hash; forceUpdate(n => n + 1); }
+
+  /* Admin */
   if (ruta === '#admin') {
     if (!haySesionAdminActiva()) {
       return <AdminLogin onIngreso={() => forceUpdate(n => n + 1)} />;
     }
-    return <AdminDashboard onSalir={() => { window.location.hash = '#admin'; forceUpdate(n => n + 1); }} />;
+    return <AdminDashboard onSalir={() => { cerrarSesionAdmin(); irA('#/'); }} />;
   }
-  return <PortalConductor />;
+  /* Transportador — acceso directo sin clave */
+  if (ruta === '#transportador') {
+    return <PortalConductor onSalir={() => irA('#/')} />;
+  }
+  /* Landing */
+  return <LandingPage onSeleccion={(rol) => irA('#' + rol)} />;
 }
 
 ReactDOM.createRoot(document.getElementById('root')).render(<App />);
