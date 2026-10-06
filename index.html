@@ -31,6 +31,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.25.6/babel.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
 <script src="https://cdn.tailwindcss.com"></script>
 <script>
   tailwind.config = {
@@ -49,6 +50,8 @@
   .input-field { width: 100%; border-radius: 0.5rem; border: 1px solid #cbd5e1; padding: 0.625rem 0.75rem; font-size: 0.875rem; color: #1e293b; }
   .input-field:focus { outline: none; border-color: #1E3A8A; box-shadow: 0 0 0 3px rgba(30,58,138,0.15); }
   .label-field { margin-bottom: 0.25rem; display: block; font-size: 0.875rem; font-weight: 500; color: #334155; }
+  .stat-glow { box-shadow: 0 0 15px rgba(30,58,138,0.08); transition: transform 0.2s, box-shadow 0.2s; }
+  .stat-glow:hover { transform: translateY(-2px); box-shadow: 0 4px 20px rgba(30,58,138,0.15); }
 </style>
 </head>
 <body>
@@ -92,6 +95,9 @@ function crearRegistroVacio() {
     },
     documentos: { cedula: null, licenciaConduccion: null, tarjetaPropiedad: null, soat: null, tecnomecanica: null },
     fotosVehiculo: { frontal: null, lateral: null, trasera: null, interiorCarroceria: null },
+    archivosAdicionales: [],
+    tipoRegistro: 'nuevo',
+    updatedAt: null,
     declaracion: {
       aceptaHabeasData: false,
       aceptaVeracidad: false,
@@ -139,10 +145,26 @@ function actualizarEstadoRegistro(id, estado) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(registros));
   return { ok: true };
 }
+function buscarRegistroPorPlaca(placa) {
+  if (!placa) return null;
+  const registros = listarRegistros();
+  return registros.find(r => (r.vehiculo?.placa || '').toUpperCase().trim() === placa.toUpperCase().trim()) || null;
+}
+function actualizarRegistro(registroActualizado) {
+  const registros = listarRegistros();
+  const idx = registros.findIndex(r => r.id === registroActualizado.id);
+  if (idx === -1) return { ok: false, error: 'Registro no encontrado.' };
+  registros[idx] = { ...registroActualizado, updatedAt: new Date().toISOString() };
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(registros));
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: 'Error al actualizar el registro.' };
+  }
+}
 
 /* ============================ AUTH (DEMO) ============================ */
 const ADMIN_PASSWORD = 'admin123'; // cámbiala aquí antes de compartir el archivo
-const TRANSPORTADOR_PASSWORD = 'dinal2026'; // cámbiala aquí — clave para que los transportadores accedan al formulario
 const SESSION_KEY = 'enrolamiento_admin_session';
 const TRANSPORT_SESSION_KEY = 'enrolamiento_transport_session';
 function iniciarSesionAdmin(pw) {
@@ -541,8 +563,54 @@ function FileUpload({ label, value, onChange, accept = 'image/*,.pdf', capture }
   );
 }
 
+/* ============================ MULTI FILE UPLOAD ============================ */
+function MultiFileUpload({ archivos, onChange }) {
+  async function agregarArchivos(e) {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    const nuevos = [];
+    for (let i = 0; i < files.length; i++) {
+      const adj = await archivoADataUrl(files[i]);
+      nuevos.push(adj);
+    }
+    onChange([...archivos, ...nuevos]);
+    e.target.value = '';
+  }
+  function eliminar(idx) {
+    onChange(archivos.filter((_, i) => i !== idx));
+  }
+  return (
+    <div>
+      <label className="label-field">Archivos adicionales</label>
+      <p className="mb-2 text-xs text-slate-400">Suba cualquier documento extra: antecedentes, certificados, pólizas, etc.</p>
+      {archivos.length > 0 && (
+        <div className="mb-3 space-y-2">
+          {archivos.map((a, i) => (
+            <div key={i} className="flex items-center justify-between rounded-lg border border-green-200 bg-green-50 px-3 py-2">
+              <div className="flex items-center gap-2 overflow-hidden">
+                <IconCheck size={16} className="shrink-0 text-green-600" />
+                <span className="truncate text-sm text-slate-700">{a.name}</span>
+                <span className="text-[10px] text-slate-400">({(a.dataUrl.length * 0.75 / 1024).toFixed(0)} KB)</span>
+              </div>
+              <button type="button" onClick={() => eliminar(i)} className="ml-2 shrink-0 text-slate-400 hover:text-red-500">
+                <IconX size={16} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      <label className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border-2 border-dashed border-slate-300 bg-white px-3 py-4 text-sm text-slate-500 hover:border-corporate-800 hover:text-corporate-800">
+        <IconUpload size={18} />
+        <span>{archivos.length === 0 ? 'Toca para subir archivos' : 'Agregar más archivos'}</span>
+        <input type="file" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" multiple className="hidden" onChange={agregarArchivos} />
+      </label>
+      <p className="mt-1 text-[10px] text-slate-400">Formatos: imágenes, PDF, Word, Excel. Puede subir varios a la vez.</p>
+    </div>
+  );
+}
+
 /* ============================ WIZARD LAYOUT ============================ */
-const PASOS = ['Conductor', 'Propietario', 'Vehículo', 'Declaración'];
+const PASOS = ['Conductor', 'Propietario', 'Vehículo', 'Declaración', 'Archivos'];
 
 function WizardLayout({ pasoActual, children, onAnterior, onSiguiente, textoBotonFinal }) {
   const esUltimo = pasoActual === PASOS.length - 1;
@@ -898,6 +966,38 @@ function Step4Declaracion({ datos, actualizar }) {
 }
 
 /* ============================ PORTAL CONDUCTOR ============================ */
+/* ============================ STEP 5 — ARCHIVOS ADICIONALES ============================ */
+function Step5Archivos({ datos, actualizar }) {
+  return (
+    <div className="space-y-5">
+      <div>
+        <h2 className="text-lg font-semibold text-slate-800">Archivos Adicionales</h2>
+        <p className="text-sm text-slate-500">Suba cualquier documento complementario que considere necesario para su registro.</p>
+      </div>
+      <MultiFileUpload
+        archivos={datos.archivosAdicionales || []}
+        onChange={(nuevos) => actualizar({ archivosAdicionales: nuevos })}
+      />
+      <div className="rounded-lg border border-blue-200 bg-blue-50 p-3">
+        <p className="text-xs font-medium text-blue-800">Documentos sugeridos:</p>
+        <ul className="mt-1 list-disc pl-4 text-xs text-blue-700 space-y-0.5">
+          <li>Antecedentes judiciales</li>
+          <li>Certificado de cuenta bancaria</li>
+          <li>RUT actualizado</li>
+          <li>Certificados de capacitación</li>
+          <li>Certificado de afiliación EPS y ARL</li>
+          <li>Póliza de responsabilidad contractual</li>
+        </ul>
+      </div>
+      {datos.tipoRegistro === 'actualizacion' && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+          <p className="text-xs text-amber-800"><strong>Actualización:</strong> Está actualizando un registro existente. Solo los campos y archivos que modifique serán actualizados.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function validarPaso(paso, datos) {
   if (paso === 0) {
     const c = datos.conductor;
@@ -920,18 +1020,43 @@ function validarPaso(paso, datos) {
 }
 
 function PortalConductor({ onSalir }) {
+  const [modo, setModo] = useState(null); // null = selección, 'nuevo', 'actualizacion'
   const [paso, setPaso] = useState(0);
   const [datos, setDatos] = useState(crearRegistroVacio());
   const [error, setError] = useState('');
   const [enviado, setEnviado] = useState(false);
+  const [placaBuscar, setPlacaBuscar] = useState('');
+  const [errorBusqueda, setErrorBusqueda] = useState('');
+  const [esActualizacion, setEsActualizacion] = useState(false);
 
   const actualizar = (cambios) => setDatos(prev => ({ ...prev, ...cambios }));
+
+  function seleccionarNuevo() {
+    setModo('nuevo');
+    setDatos({ ...crearRegistroVacio(), tipoRegistro: 'nuevo' });
+    setPaso(0);
+  }
+  function seleccionarActualizacion() {
+    setModo('actualizacion');
+  }
+  function buscarPorPlaca() {
+    setErrorBusqueda('');
+    const resultado = buscarRegistroPorPlaca(placaBuscar);
+    if (!resultado) {
+      setErrorBusqueda('No se encontró ningún registro con la placa ' + placaBuscar.toUpperCase() + '. Verifique o registre como nuevo.');
+      return;
+    }
+    setDatos({ ...resultado, tipoRegistro: 'actualizacion' });
+    setEsActualizacion(true);
+    setPaso(0);
+    setModo('formulario');
+  }
 
   function siguiente() {
     const msg = validarPaso(paso, datos);
     if (msg) { setError(msg); return; }
     setError('');
-    if (paso < 3) { setPaso(p => p + 1); window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
+    if (paso < PASOS.length - 1) { setPaso(p => p + 1); window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
     finalizar();
   }
   function anterior() {
@@ -939,21 +1064,27 @@ function PortalConductor({ onSalir }) {
   }
   function finalizar() {
     const registroFinal = { ...datos, declaracion: { ...datos.declaracion, fechaHoraFirma: new Date().toISOString() } };
-    const resultado = guardarRegistro(registroFinal);
+    let resultado;
+    if (esActualizacion) {
+      resultado = actualizarRegistro(registroFinal);
+    } else {
+      resultado = guardarRegistro(registroFinal);
+    }
     if (!resultado.ok) { setError(resultado.error); return; }
     generarPdfEnrolamiento(registroFinal);
     setEnviado(true);
   }
 
+  /* Pantalla de éxito */
   if (enviado) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-neutral-50 px-4">
         <div className="max-w-sm rounded-xl bg-white p-8 text-center shadow-sm ring-1 ring-slate-200">
           <IconCheck size={48} className="mx-auto mb-4 text-green-600" />
-          <h1 className="text-lg font-semibold text-slate-800">Registro completado</h1>
-          <p className="mt-2 text-sm text-slate-500">Su ficha de enrolamiento fue registrada y el PDF se descargó automáticamente.</p>
+          <h1 className="text-lg font-semibold text-slate-800">{esActualizacion ? 'Actualización completada' : 'Registro completado'}</h1>
+          <p className="mt-2 text-sm text-slate-500">{esActualizacion ? 'Los datos fueron actualizados exitosamente.' : 'Su ficha de enrolamiento fue registrada y el PDF se descargó automáticamente.'}</p>
           <div className="mt-5 space-y-2">
-            <button onClick={() => { setDatos(crearRegistroVacio()); setPaso(0); setEnviado(false); }} className="w-full rounded-lg bg-corporate-800 py-2 text-sm font-medium text-white hover:bg-corporate-950 transition">Registrar otro conductor</button>
+            <button onClick={() => { setDatos(crearRegistroVacio()); setPaso(0); setEnviado(false); setModo(null); setEsActualizacion(false); setPlacaBuscar(''); }} className="w-full rounded-lg bg-corporate-800 py-2 text-sm font-medium text-white hover:bg-corporate-950 transition">Realizar otro registro</button>
             {onSalir && <button onClick={onSalir} className="w-full text-center text-xs text-slate-500 hover:text-slate-700">← Volver al inicio</button>}
           </div>
         </div>
@@ -961,15 +1092,91 @@ function PortalConductor({ onSalir }) {
     );
   }
 
+  /* Pantalla de selección Nuevo / Actualización */
+  if (modo === null) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-neutral-50 px-4">
+        <div className="w-full max-w-md space-y-5">
+          <div className="text-center">
+            {LOGO_EMPRESA_BASE64
+              ? <img src={LOGO_EMPRESA_BASE64} alt="Logo" className="mx-auto mb-3 h-14 w-auto" />
+              : <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-blue-100"><IconTruck size={28} className="text-blue-700" /></div>}
+            <h1 className="text-xl font-bold text-slate-800">Portal del Transportador</h1>
+            <p className="mt-1 text-sm text-slate-500">Seleccione el tipo de trámite</p>
+          </div>
+          <div className="space-y-3">
+            <button onClick={seleccionarNuevo}
+              className="flex w-full items-center gap-4 rounded-xl bg-white p-5 text-left shadow-sm ring-1 ring-slate-200 transition hover:ring-corporate-800 hover:shadow-md active:scale-[0.98]">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-green-100 text-green-700">
+                <Icon path={<><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></>} size={24} />
+              </div>
+              <div>
+                <p className="text-base font-semibold text-slate-800">Nuevo Registro</p>
+                <p className="text-xs text-slate-500">Primera vez que registra conductor y vehículo</p>
+              </div>
+              <IconChevronRight size={20} className="ml-auto text-slate-400" />
+            </button>
+            <button onClick={seleccionarActualizacion}
+              className="flex w-full items-center gap-4 rounded-xl bg-white p-5 text-left shadow-sm ring-1 ring-slate-200 transition hover:ring-corporate-800 hover:shadow-md active:scale-[0.98]">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-blue-100 text-blue-700">
+                <Icon path={<><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></>} size={24} />
+              </div>
+              <div>
+                <p className="text-base font-semibold text-slate-800">Actualización de Datos</p>
+                <p className="text-xs text-slate-500">Actualice documentos o información existente</p>
+              </div>
+              <IconChevronRight size={20} className="ml-auto text-slate-400" />
+            </button>
+          </div>
+          {onSalir && <button onClick={onSalir} className="w-full text-center text-xs text-slate-500 hover:text-slate-700 mt-2">← Volver al inicio</button>}
+        </div>
+      </div>
+    );
+  }
+
+  /* Pantalla de búsqueda por placa para actualización */
+  if (modo === 'actualizacion') {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-neutral-50 px-4">
+        <div className="w-full max-w-sm space-y-4 rounded-xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
+          <div className="text-center">
+            <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-full bg-blue-100"><IconSearch size={24} className="text-blue-700" /></div>
+            <h1 className="text-lg font-semibold text-slate-800">Buscar Registro</h1>
+            <p className="mt-1 text-xs text-slate-500">Ingrese la placa del vehículo para cargar sus datos</p>
+          </div>
+          <div>
+            <label className="label-field">Placa del vehículo</label>
+            <input type="text" className="input-field text-center text-lg font-bold uppercase tracking-wider" placeholder="ABC 123" value={placaBuscar}
+              onChange={e => { setPlacaBuscar(e.target.value.toUpperCase()); setErrorBusqueda(''); }}
+              onKeyDown={e => e.key === 'Enter' && buscarPorPlaca()}
+              autoFocus />
+            {errorBusqueda && <p className="mt-2 text-xs text-red-600">{errorBusqueda}</p>}
+          </div>
+          <button type="button" onClick={buscarPorPlaca} disabled={!placaBuscar.trim()} className="w-full rounded-lg bg-corporate-800 py-2.5 text-sm font-medium text-white hover:bg-corporate-950 transition disabled:opacity-50 disabled:cursor-not-allowed">
+            <span className="flex items-center justify-center gap-2"><IconSearch size={16} /> Buscar</span>
+          </button>
+          <button type="button" onClick={() => { setModo(null); setPlacaBuscar(''); setErrorBusqueda(''); }} className="w-full text-center text-xs text-slate-500 hover:text-slate-700">← Volver</button>
+        </div>
+      </div>
+    );
+  }
+
+  /* Formulario wizard (nuevo o con datos pre-cargados) */
   const pasos = [
     <Step1Conductor key="1" datos={datos} actualizar={actualizar} />,
     <Step2Propietario key="2" datos={datos} actualizar={actualizar} />,
     <Step3Vehiculo key="3" datos={datos} actualizar={actualizar} />,
     <Step4Declaracion key="4" datos={datos} actualizar={actualizar} />,
+    <Step5Archivos key="5" datos={datos} actualizar={actualizar} />,
   ];
 
   return (
-    <WizardLayout pasoActual={paso} onAnterior={anterior} onSiguiente={siguiente} textoBotonFinal="Enviar y generar PDF">
+    <WizardLayout pasoActual={paso} onAnterior={anterior} onSiguiente={siguiente} textoBotonFinal={esActualizacion ? 'Actualizar y generar PDF' : 'Enviar y generar PDF'}>
+      {esActualizacion && paso === 0 && (
+        <div className="mb-4 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-700">
+          <strong>Modo actualización:</strong> Los datos del registro con placa <strong>{datos.vehiculo.placa}</strong> han sido cargados. Modifique lo que necesite.
+        </div>
+      )}
       {error && <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
       {pasos[paso]}
     </WizardLayout>
@@ -1197,6 +1404,16 @@ function DriverDetailModal({ registro, onCerrar, onCambiarEstado }) {
             </div>
             <p className="mt-2 text-[11px] text-slate-400">Clic en un documento para abrirlo o descargarlo en alta resolución.</p>
           </section>
+          {registro.archivosAdicionales && registro.archivosAdicionales.length > 0 && (
+            <section>
+              <h3 className="mb-2 text-sm font-semibold text-corporate-800">Archivos Adicionales ({registro.archivosAdicionales.length})</h3>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                {registro.archivosAdicionales.map((a, i) => (
+                  <Documento key={i} etiqueta={a.name} archivo={a} />
+                ))}
+              </div>
+            </section>
+          )}
           <section className="flex flex-wrap items-center gap-3 border-t border-slate-200 pt-4">
             <button onClick={() => generarPdfEnrolamiento(registro)} className="inline-flex items-center gap-2 rounded-lg bg-corporate-800 px-4 py-2 text-sm font-medium text-white hover:bg-corporate-950">
               <IconDownload size={16} /> Volver a descargar PDF
@@ -1281,6 +1498,12 @@ function AdminDashboard({ onSalir }) {
   const [registros, setRegistros] = useState(() => listarRegistros());
   const [filtros, setFiltros] = useState({ texto: '', estado: 'todos', fecha: '' });
   const [seleccionado, setSeleccionado] = useState(null);
+  const [vistaActiva, setVistaActiva] = useState('dashboard'); // 'dashboard' | 'tabla'
+  const chartEstadoRef = useRef(null);
+  const chartTiempoRef = useRef(null);
+  const chartCiudadesRef = useRef(null);
+  const chartDocsRef = useRef(null);
+  const chartInstancesRef = useRef({});
 
   const registrosConEstado = useMemo(() => registros.map(r => ({ ...r, estadoDocumental: calcularEstadoDocumental(r) })), [registros]);
   const registrosFiltrados = useMemo(() => registrosConEstado.filter(r => {
@@ -1298,17 +1521,112 @@ function AdminDashboard({ onSalir }) {
     vencidos: registrosConEstado.filter(r => r.estadoDocumental === 'vencido').length,
   }), [registrosConEstado]);
 
-  /* Estadísticas adicionales */
   const statsExtra = useMemo(() => {
     const hoy = new Date().toISOString().slice(0, 10);
     const estaSemana = new Date(); estaSemana.setDate(estaSemana.getDate() - 7);
     const semanaISO = estaSemana.toISOString();
+    const esteMes = new Date(); esteMes.setDate(1); esteMes.setHours(0,0,0,0);
+    const mesISO = esteMes.toISOString();
     return {
       hoy: registrosConEstado.filter(r => (r.createdAt || '').slice(0, 10) === hoy).length,
       estaSemana: registrosConEstado.filter(r => (r.createdAt || '') >= semanaISO).length,
+      esteMes: registrosConEstado.filter(r => (r.createdAt || '') >= mesISO).length,
       conFirma: registrosConEstado.filter(r => r.declaracion?.firmaDataUrl).length,
+      conDocCompletos: registrosConEstado.filter(r => {
+        const d = r.documentos || {};
+        return d.cedula && d.licenciaConduccion && d.tarjetaPropiedad && d.soat && d.tecnomecanica;
+      }).length,
+      conFotosCompletas: registrosConEstado.filter(r => {
+        const f = r.fotosVehiculo || {};
+        return f.frontal && f.lateral && f.trasera && f.interiorCarroceria;
+      }).length,
+      actualizaciones: registrosConEstado.filter(r => r.tipoRegistro === 'actualizacion' || r.updatedAt).length,
     };
   }, [registrosConEstado]);
+
+  /* Chart.js charts */
+  useEffect(() => {
+    if (vistaActiva !== 'dashboard' || !window.Chart) return;
+    const Chart = window.Chart;
+
+    // Destroy previous instances
+    Object.values(chartInstancesRef.current).forEach(c => c && c.destroy());
+    chartInstancesRef.current = {};
+
+    // 1. Pie chart - Estado documental
+    if (chartEstadoRef.current) {
+      chartInstancesRef.current.estado = new Chart(chartEstadoRef.current, {
+        type: 'doughnut',
+        data: {
+          labels: ['Vigente', 'Por vencer', 'Vencido / Alerta'],
+          datasets: [{ data: [totales.vigentes, totales.alertas, totales.vencidos], backgroundColor: ['#10B981', '#F59E0B', '#EF4444'], borderWidth: 2, borderColor: '#fff' }]
+        },
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { padding: 12, usePointStyle: true } } } }
+      });
+    }
+
+    // 2. Bar chart - Registros por día (últimos 7 días)
+    if (chartTiempoRef.current) {
+      const dias = [];
+      const cuentas = [];
+      for (let i = 6; i >= 0; i--) {
+        const d = new Date(); d.setDate(d.getDate() - i);
+        const label = d.toLocaleDateString('es-CO', { weekday: 'short', day: 'numeric' });
+        const iso = d.toISOString().slice(0, 10);
+        dias.push(label);
+        cuentas.push(registrosConEstado.filter(r => (r.createdAt || '').slice(0, 10) === iso).length);
+      }
+      chartInstancesRef.current.tiempo = new Chart(chartTiempoRef.current, {
+        type: 'bar',
+        data: {
+          labels: dias,
+          datasets: [{ label: 'Registros', data: cuentas, backgroundColor: 'rgba(30,58,138,0.7)', borderRadius: 6, barThickness: 20 }]
+        },
+        options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } }, plugins: { legend: { display: false } } }
+      });
+    }
+
+    // 3. Bar chart - Top ciudades
+    if (chartCiudadesRef.current) {
+      const ciudadMap = {};
+      registrosConEstado.forEach(r => {
+        const ciudad = (r.conductor?.ciudad || 'Sin ciudad').trim();
+        ciudadMap[ciudad] = (ciudadMap[ciudad] || 0) + 1;
+      });
+      const sorted = Object.entries(ciudadMap).sort((a, b) => b[1] - a[1]).slice(0, 6);
+      chartInstancesRef.current.ciudades = new Chart(chartCiudadesRef.current, {
+        type: 'bar',
+        data: {
+          labels: sorted.map(s => s[0]),
+          datasets: [{ label: 'Registros', data: sorted.map(s => s[1]), backgroundColor: ['#3B82F6', '#8B5CF6', '#EC4899', '#F59E0B', '#10B981', '#6366F1'], borderRadius: 6 }]
+        },
+        options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, scales: { x: { beginAtZero: true, ticks: { stepSize: 1 } } }, plugins: { legend: { display: false } } }
+      });
+    }
+
+    // 4. Bar chart - Completitud de documentos
+    if (chartDocsRef.current) {
+      const docs = registrosConEstado;
+      const docLabels = ['Cédula', 'Licencia', 'Tarj. Prop.', 'SOAT', 'Tecnomecánica'];
+      const docCounts = [
+        docs.filter(r => r.documentos?.cedula).length,
+        docs.filter(r => r.documentos?.licenciaConduccion).length,
+        docs.filter(r => r.documentos?.tarjetaPropiedad).length,
+        docs.filter(r => r.documentos?.soat).length,
+        docs.filter(r => r.documentos?.tecnomecanica).length,
+      ];
+      chartInstancesRef.current.docs = new Chart(chartDocsRef.current, {
+        type: 'bar',
+        data: {
+          labels: docLabels,
+          datasets: [{ label: 'Cargados', data: docCounts, backgroundColor: 'rgba(16,150,72,0.7)', borderRadius: 6, barThickness: 24 }]
+        },
+        options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true, ticks: { stepSize: 1 }, max: Math.max(totales.total, 1) } }, plugins: { legend: { display: false } } }
+      });
+    }
+
+    return () => { Object.values(chartInstancesRef.current).forEach(c => c && c.destroy()); };
+  }, [vistaActiva, registrosConEstado, totales]);
 
   function cambiarEstado(id, estado) {
     actualizarEstadoRegistro(id, estado);
@@ -1316,51 +1634,136 @@ function AdminDashboard({ onSalir }) {
     setSeleccionado(prev => prev ? { ...prev, estado } : prev);
   }
   function cerrarSesion() { cerrarSesionAdmin(); onSalir(); }
+  function refrescar() { setRegistros(listarRegistros()); }
+
+  const pctVigentes = totales.total > 0 ? Math.round((totales.vigentes / totales.total) * 100) : 0;
+  const pctDocsCompletos = totales.total > 0 ? Math.round((statsExtra.conDocCompletos / totales.total) * 100) : 0;
 
   return (
     <div className="min-h-screen bg-neutral-50">
       <header className="border-b border-slate-200 bg-corporate-950 px-6 py-4 text-white">
-        <div className="mx-auto flex max-w-6xl items-center justify-between">
+        <div className="mx-auto flex max-w-7xl items-center justify-between">
           <div className="flex items-center gap-2">
             {LOGO_EMPRESA_BASE64 ? <img src={LOGO_EMPRESA_BASE64} alt="Logo" className="h-7 w-auto" /> : <IconTruck size={20} />}
-            <h1 className="text-base font-semibold">Panel de Administración — Enrolamiento</h1>
+            <h1 className="text-base font-semibold">Panel de Administración</h1>
           </div>
           <div className="flex items-center gap-3">
-            <button onClick={() => exportarCSV(registrosConEstado)} className="flex items-center gap-1.5 rounded-lg bg-white/10 px-3 py-1.5 text-xs text-slate-200 hover:bg-white/20 transition">
-              <IconDownload size={14} /> Exportar CSV
+            <button onClick={refrescar} className="flex items-center gap-1.5 rounded-lg bg-white/10 px-3 py-1.5 text-xs text-slate-200 hover:bg-white/20 transition" title="Refrescar datos">
+              ↻ Refrescar
             </button>
-            <button onClick={cerrarSesion} className="flex items-center gap-1.5 text-sm text-slate-300 hover:text-white"><IconLogOut size={16} /> Cerrar sesión</button>
+            <button onClick={() => exportarCSV(registrosConEstado)} className="flex items-center gap-1.5 rounded-lg bg-white/10 px-3 py-1.5 text-xs text-slate-200 hover:bg-white/20 transition">
+              <IconDownload size={14} /> CSV
+            </button>
+            <button onClick={cerrarSesion} className="flex items-center gap-1.5 text-sm text-slate-300 hover:text-white"><IconLogOut size={16} /> Salir</button>
           </div>
         </div>
       </header>
-      <main className="mx-auto max-w-6xl space-y-6 px-6 py-6">
-        {/* Tarjetas principales */}
+
+      {/* Tabs Dashboard / Registros */}
+      <div className="mx-auto max-w-7xl px-6 pt-4">
+        <div className="flex gap-1 rounded-lg bg-slate-200 p-1 w-fit">
+          <button onClick={() => setVistaActiva('dashboard')} className={"rounded-md px-4 py-1.5 text-sm font-medium transition " + (vistaActiva === 'dashboard' ? 'bg-white text-corporate-800 shadow-sm' : 'text-slate-600 hover:text-slate-800')}>
+            Dashboard
+          </button>
+          <button onClick={() => setVistaActiva('tabla')} className={"rounded-md px-4 py-1.5 text-sm font-medium transition " + (vistaActiva === 'tabla' ? 'bg-white text-corporate-800 shadow-sm' : 'text-slate-600 hover:text-slate-800')}>
+            Registros ({totales.total})
+          </button>
+        </div>
+      </div>
+
+      <main className="mx-auto max-w-7xl space-y-6 px-6 py-5">
+        {/* Tarjetas principales - siempre visibles */}
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
           <StatCard icono={IconUsers} etiqueta="Total registros" valor={totales.total} tono="bg-slate-100 text-slate-700" />
           <StatCard icono={IconTruck} etiqueta="Vigentes" valor={totales.vigentes} tono="bg-green-100 text-green-700" />
           <StatCard icono={IconClock} etiqueta="Por vencer" valor={totales.alertas} tono="bg-amber-100 text-amber-700" />
-          <StatCard icono={IconShieldAlert} etiqueta="Vencidos / alertas" valor={totales.vencidos} tono="bg-red-100 text-red-700" />
+          <StatCard icono={IconShieldAlert} etiqueta="Vencidos" valor={totales.vencidos} tono="bg-red-100 text-red-700" />
         </div>
-        {/* Resumen rápido */}
-        <div className="grid grid-cols-3 gap-4">
-          <div className="rounded-xl bg-white p-4 shadow-sm ring-1 ring-slate-200 text-center">
-            <p className="text-2xl font-bold text-blue-700">{statsExtra.hoy}</p>
-            <p className="text-xs text-slate-500">Registros hoy</p>
-          </div>
-          <div className="rounded-xl bg-white p-4 shadow-sm ring-1 ring-slate-200 text-center">
-            <p className="text-2xl font-bold text-indigo-700">{statsExtra.estaSemana}</p>
-            <p className="text-xs text-slate-500">Esta semana</p>
-          </div>
-          <div className="rounded-xl bg-white p-4 shadow-sm ring-1 ring-slate-200 text-center">
-            <p className="text-2xl font-bold text-emerald-700">{statsExtra.conFirma}</p>
-            <p className="text-xs text-slate-500">Con firma digital</p>
-          </div>
-        </div>
-        {/* Actividad reciente */}
-        <ActividadReciente registros={registrosConEstado} />
-        {/* Filtros y tabla */}
-        <Filters filtros={filtros} onChange={setFiltros} />
-        <DriversTable registros={registrosFiltrados} onVer={setSeleccionado} />
+
+        {vistaActiva === 'dashboard' ? (
+          <>
+            {/* Indicadores de progreso */}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="stat-glow rounded-xl bg-white p-4 ring-1 ring-slate-200">
+                <p className="text-xs text-slate-500 mb-1">Registros hoy</p>
+                <p className="text-3xl font-bold text-blue-700">{statsExtra.hoy}</p>
+                <div className="mt-2 h-1.5 rounded-full bg-blue-100"><div className="h-full rounded-full bg-blue-500 transition-all" style={{width: Math.min(statsExtra.hoy * 10, 100) + '%'}}></div></div>
+              </div>
+              <div className="stat-glow rounded-xl bg-white p-4 ring-1 ring-slate-200">
+                <p className="text-xs text-slate-500 mb-1">Esta semana</p>
+                <p className="text-3xl font-bold text-indigo-700">{statsExtra.estaSemana}</p>
+                <div className="mt-2 h-1.5 rounded-full bg-indigo-100"><div className="h-full rounded-full bg-indigo-500 transition-all" style={{width: Math.min(statsExtra.estaSemana * 5, 100) + '%'}}></div></div>
+              </div>
+              <div className="stat-glow rounded-xl bg-white p-4 ring-1 ring-slate-200">
+                <p className="text-xs text-slate-500 mb-1">% Vigentes</p>
+                <p className="text-3xl font-bold text-emerald-700">{pctVigentes}%</p>
+                <div className="mt-2 h-1.5 rounded-full bg-emerald-100"><div className="h-full rounded-full bg-emerald-500 transition-all" style={{width: pctVigentes + '%'}}></div></div>
+              </div>
+              <div className="stat-glow rounded-xl bg-white p-4 ring-1 ring-slate-200">
+                <p className="text-xs text-slate-500 mb-1">% Docs completos</p>
+                <p className="text-3xl font-bold text-purple-700">{pctDocsCompletos}%</p>
+                <div className="mt-2 h-1.5 rounded-full bg-purple-100"><div className="h-full rounded-full bg-purple-500 transition-all" style={{width: pctDocsCompletos + '%'}}></div></div>
+              </div>
+            </div>
+
+            {/* Resumen detallado */}
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-6">
+              <div className="rounded-xl bg-white p-3 shadow-sm ring-1 ring-slate-200 text-center">
+                <p className="text-xl font-bold text-teal-700">{statsExtra.conFirma}</p>
+                <p className="text-[10px] text-slate-500">Con firma digital</p>
+              </div>
+              <div className="rounded-xl bg-white p-3 shadow-sm ring-1 ring-slate-200 text-center">
+                <p className="text-xl font-bold text-cyan-700">{statsExtra.conDocCompletos}</p>
+                <p className="text-[10px] text-slate-500">Docs completos</p>
+              </div>
+              <div className="rounded-xl bg-white p-3 shadow-sm ring-1 ring-slate-200 text-center">
+                <p className="text-xl font-bold text-pink-700">{statsExtra.conFotosCompletas}</p>
+                <p className="text-[10px] text-slate-500">Fotos completas</p>
+              </div>
+              <div className="rounded-xl bg-white p-3 shadow-sm ring-1 ring-slate-200 text-center">
+                <p className="text-xl font-bold text-orange-700">{statsExtra.esteMes}</p>
+                <p className="text-[10px] text-slate-500">Este mes</p>
+              </div>
+              <div className="rounded-xl bg-white p-3 shadow-sm ring-1 ring-slate-200 text-center">
+                <p className="text-xl font-bold text-violet-700">{statsExtra.actualizaciones}</p>
+                <p className="text-[10px] text-slate-500">Actualizaciones</p>
+              </div>
+              <div className="rounded-xl bg-white p-3 shadow-sm ring-1 ring-slate-200 text-center">
+                <p className="text-xl font-bold text-lime-700">{totales.total - statsExtra.conDocCompletos}</p>
+                <p className="text-[10px] text-slate-500">Docs pendientes</p>
+              </div>
+            </div>
+
+            {/* Gráficos */}
+            <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+              <div className="rounded-xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+                <h3 className="mb-3 text-sm font-semibold text-slate-800">Estado Documental</h3>
+                <div className="h-56"><canvas ref={chartEstadoRef}></canvas></div>
+              </div>
+              <div className="rounded-xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+                <h3 className="mb-3 text-sm font-semibold text-slate-800">Registros últimos 7 días</h3>
+                <div className="h-56"><canvas ref={chartTiempoRef}></canvas></div>
+              </div>
+              <div className="rounded-xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+                <h3 className="mb-3 text-sm font-semibold text-slate-800">Top Ciudades</h3>
+                <div className="h-56"><canvas ref={chartCiudadesRef}></canvas></div>
+              </div>
+              <div className="rounded-xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+                <h3 className="mb-3 text-sm font-semibold text-slate-800">Documentos Cargados</h3>
+                <div className="h-56"><canvas ref={chartDocsRef}></canvas></div>
+              </div>
+            </div>
+
+            {/* Actividad reciente */}
+            <ActividadReciente registros={registrosConEstado} />
+          </>
+        ) : (
+          <>
+            {/* Vista tabla */}
+            <Filters filtros={filtros} onChange={setFiltros} />
+            <DriversTable registros={registrosFiltrados} onVer={setSeleccionado} />
+          </>
+        )}
       </main>
       <DriverDetailModal registro={seleccionado} onCerrar={() => setSeleccionado(null)} onCambiarEstado={cambiarEstado} />
     </div>
